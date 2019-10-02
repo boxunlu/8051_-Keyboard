@@ -1,0 +1,480 @@
+C51 COMPILER V7.08   TEXT1                                                                 06/13/2019 17:43:46 PAGE 1   
+
+
+C51 COMPILER V7.08, COMPILATION OF MODULE TEXT1
+OBJECT MODULE PLACED IN Text1.OBJ
+COMPILER INVOKED BY: C:\Keil\C51\BIN\C51.EXE Text1.c BROWSE DEBUG OBJECTEXTEND
+
+line level    source
+
+   1          /*-----------------------------------------------
+   2            名稱：LCD1602
+   3            論壇：www.doflye.net
+   4            編寫：shifang
+   5            日期：2009.5
+   6            修改：無
+   7            內容：通過標準程序動態顯示字符
+   8            引腳定義如下：1-VSS 2-VDD 3-V0 4-RS 5-R/W 6-E 7-14 DB0-DB7 15-BLA 16-BLK
+   9          ------------------------------------------------*/
+  10          #include<reg52.h> //包含頭文件，一般情況不需要改動，頭文件包含特殊功能寄存器的定義
+  11          #include<intrins.h>
+  12          
+  13          sbit SPK = P1^2;    //定義喇叭端口
+  14          sbit RS = P2^4;   //定義端口 
+  15          sbit RW = P2^5;
+  16          sbit EN = P2^6;
+  17          
+  18          #define RS_CLR RS=0 
+  19          #define RS_SET RS=1
+  20          
+  21          #define RW_CLR RW=0 
+  22          #define RW_SET RW=1 
+  23          
+  24          #define EN_CLR EN=0
+  25          #define EN_SET EN=1
+  26          
+  27          #define DataPort P0
+  28          #define Limit    16
+  29          
+  30          sbit LED0 = P1^0;
+  31          sbit LED1 = P1^1;
+  32          sbit LED2 = P1^2;
+  33          sbit LED3 = P1^3;
+  34          sbit LED4 = P1^4;
+  35          sbit LED5 = P1^5;
+  36          sbit LED6 = P1^6;
+  37          sbit LED7 = P1^7;
+  38          #define ON 0
+  39          #define OFF 1
+  40          
+  41          
+  42          unsigned char recbuf[Limit];
+  43          unsigned char head = 0;
+  44          unsigned char tail = 0;
+  45          unsigned char frq; // 宣告頻率
+  46          unsigned char num;
+  47          unsigned char Timer0_H,Timer0_L,Time;
+  48          
+  49          void DelayUs2x(unsigned char t);//函數聲明 
+  50          void DelayMs(unsigned char t);
+  51          
+  52          code unsigned char FREQH[]={
+  53              0xFE, 0XFE, 0XFE, 0XFE, 0XFE, 0XFE, 0XFE, 0XFE, 0XFE, 0XFE,
+  54              0XFE, 0XFE, 0XFD, 0XFD, 0XFD, 0XFD, 0XFD, 0XFF
+  55          } ;
+C51 COMPILER V7.08   TEXT1                                                                 06/13/2019 17:43:46 PAGE 2   
+
+  56                                   // 音階頻率表 低八位
+  57          code unsigned char FREQL[]={
+  58              0xFA, 0XEB, 0XDA, 0XC9, 0XB6, 0XA2, 0X8E, 0X78, 0X61, 0X48,
+  59              0X2E, 0X12, 0XF5, 0XD6, 0XB5, 0X92, 0X6D, 0XFF
+  60          };
+  61          
+  62          void Init_Timer0(void)
+  63          {
+  64   1       TMOD |= 0x21;    //使用模式1，16位定時器，使用"|"符號可以在使用多個定時器時不受影響                 
+  65   1       //TH0=0x00;          //給定初值
+  66   1       //TL0=0x00;
+  67   1       EA=1;            //總中斷打開
+  68   1       ET0=1;           //定時器中斷打開
+  69   1       TR0=1;           //定時器開關打開
+  70   1      }
+  71          
+  72          void output(unsigned char num){
+  73   1              Init_Timer0(); //初始化定時器
+  74   1      
+  75   1             
+  76   1            //DelayMs(1); //延時1ms，累加頻率值
+  77   1                frq = num;
+  78   1                
+  79   1              
+  80   1      }
+  81          
+  82          
+  83          void Timer0_isr(void) interrupt 1 
+  84          {
+  85   1       TH0=Timer0_H;            //重新賦值 
+  86   1       TL0=Timer0_L;         //低8位值在主程序中不斷累加
+  87   1       
+  88   1       SPK=!SPK;        //端口電平取反
+  89   1      
+  90   1      }
+  91          
+  92          
+  93          void InitUART  (void)
+  94          {
+  95   1      
+  96   1          SCON  = 0x50;                       // SCON: 模式 1, 8-bit UART, 使能接收  
+  97   1          TMOD |= 0x21;               // TMOD: timer 1, mode 2, 8-bit 重裝
+  98   1          TH1   = 0xFD;               // TH1:  重裝值 9600 波特率 晶振 11.0592MHz  
+  99   1          TR1   = 1;                  // TR1:  timer 1 打開                         
+ 100   1          EA    = 1;                  //打開總中斷
+ 101   1          ES    = 1;                  //打開串口中斷
+ 102   1      }    
+ 103          
+ 104          
+ 105          void SendByte(unsigned char dat)
+ 106          {
+ 107   1       SBUF = dat;
+ 108   1       while(!TI);
+ 109   1            TI = 0;
+ 110   1      }
+ 111          /*------------------------------------------------
+ 112                              發送一個字符串
+ 113          ------------------------------------------------*/
+ 114          void SendStr(unsigned char *s)
+ 115          {
+ 116   1       while(*s!='\0')// \0 表示字符串結束標誌，通過檢測是否字符串末尾
+ 117   1        {
+C51 COMPILER V7.08   TEXT1                                                                 06/13/2019 17:43:46 PAGE 3   
+
+ 118   2        SendByte(*s);
+ 119   2        s++;
+ 120   2        }
+ 121   1      }
+ 122          /*------------------------------------------------
+ 123                               串口中斷程序
+ 124          ------------------------------------------------*/
+ 125          void UART_SER (void) interrupt 4 //串行中斷服務程序
+ 126          {
+ 127   1          unsigned char Temp;          //定義臨時變量 
+ 128   1         
+ 129   1         if(RI)                        //判斷是接收中斷產生
+ 130   1           {
+ 131   2                RI=0;                      //標誌位清零
+ 132   2                Temp=SBUF;                 //讀入緩衝區的值
+ 133   2                recbuf[head] = Temp;                  
+ 134   2      
+ 135   2            head++;
+ 136   2            if (head == Limit)
+ 137   2                head = 0;                 
+ 138   2               }
+ 139   1       //  if(TI)                        //如果是發送標誌位，清零
+ 140   1       //    TI=0;
+ 141   1      } 
+ 142          
+ 143          /*------------------------------------------------
+ 144           uS延時函數，含有輸入參數 unsigned char t，無返回值
+ 145           unsigned char 是定義無符號字符變量，其值的範圍是
+ 146           0~255 這裡使用晶振12M，精確延時請使用彙編,大致延時
+ 147           長度如下 T=tx2+5 uS 
+ 148          ------------------------------------------------*/
+ 149          void DelayUs2x(unsigned char t)
+ 150          {   
+ 151   1       while(--t);
+ 152   1      }
+ 153          /*------------------------------------------------
+ 154           mS延時函數，含有輸入參數 unsigned char t，無返回值
+ 155           unsigned char 是定義無符號字符變量，其值的範圍是
+ 156           0~255 這裡使用晶振12M，精確延時請使用彙編
+ 157          ------------------------------------------------*/
+ 158          void DelayMs(unsigned char t)
+ 159          {
+ 160   1           
+ 161   1       while(t--)
+ 162   1       {
+ 163   2           //大致延時1mS
+ 164   2           DelayUs2x(245);
+ 165   2               DelayUs2x(245);
+ 166   2       }
+ 167   1      }
+ 168          /*------------------------------------------------
+ 169                        判忙函數
+ 170          ------------------------------------------------*/
+ 171           bit LCD_Check_Busy(void) 
+ 172           { 
+ 173   1       DataPort= 0xFF; 
+ 174   1       RS_CLR; 
+ 175   1       RW_SET; 
+ 176   1       EN_CLR; 
+ 177   1       _nop_(); 
+ 178   1       EN_SET;
+ 179   1       return (bit)(DataPort & 0x80);
+C51 COMPILER V7.08   TEXT1                                                                 06/13/2019 17:43:46 PAGE 4   
+
+ 180   1       }
+ 181          /*------------------------------------------------
+ 182                        寫入命令函數
+ 183          ------------------------------------------------*/
+ 184           void LCD_Write_Com(unsigned char com) 
+ 185           {  
+ 186   1      // while(LCD_Check_Busy()); //忙則等待
+ 187   1       DelayMs(5);
+ 188   1       RS_CLR; 
+ 189   1       RW_CLR; 
+ 190   1       EN_SET; 
+ 191   1       DataPort= com; 
+ 192   1       _nop_(); 
+ 193   1       EN_CLR;
+ 194   1       }
+ 195          /*------------------------------------------------
+ 196                        寫入數據函數
+ 197          ------------------------------------------------*/
+ 198           void LCD_Write_Data(unsigned char Data) 
+ 199           { 
+ 200   1       //while(LCD_Check_Busy()); //忙則等待
+ 201   1       DelayMs(5);
+ 202   1       RS_SET; 
+ 203   1       RW_CLR; 
+ 204   1       EN_SET; 
+ 205   1       DataPort= Data; 
+ 206   1       _nop_();
+ 207   1       EN_CLR;
+ 208   1       }
+ 209          
+ 210          /*------------------------------------------------
+ 211                          清屏函數
+ 212          ------------------------------------------------*/
+ 213           void LCD_Clear(void) 
+ 214           { 
+ 215   1       LCD_Write_Com(0x01); 
+ 216   1       DelayMs(5);
+ 217   1       }
+ 218          /*------------------------------------------------
+ 219                        寫入字符串函數
+ 220          ------------------------------------------------*/
+ 221           void LCD_Write_String(unsigned char x,unsigned char y,unsigned char *s) 
+ 222           {     
+ 223   1       if (y == 0) 
+ 224   1              {     
+ 225   2               LCD_Write_Com(0x80 + x);     
+ 226   2              }
+ 227   1       else 
+ 228   1              {     
+ 229   2              LCD_Write_Com(0xC0 + x);     
+ 230   2              }        
+ 231   1       while (*s) 
+ 232   1              {     
+ 233   2       LCD_Write_Data( *s);     
+ 234   2       s ++;     
+ 235   2              }
+ 236   1       }
+ 237          /*------------------------------------------------
+ 238                        寫入字符函數
+ 239          ------------------------------------------------*/
+ 240           void LCD_Write_Char(unsigned char x,unsigned char y,unsigned char Data) 
+ 241           {     
+C51 COMPILER V7.08   TEXT1                                                                 06/13/2019 17:43:46 PAGE 5   
+
+ 242   1       if (y == 0) 
+ 243   1              {     
+ 244   2              LCD_Write_Com(0x80 + x);     
+ 245   2              }    
+ 246   1       else 
+ 247   1              {     
+ 248   2              LCD_Write_Com(0xC0 + x);     
+ 249   2              }        
+ 250   1       LCD_Write_Data( Data);  
+ 251   1       }
+ 252          /*------------------------------------------------
+ 253                        初始化函數
+ 254          ------------------------------------------------*/
+ 255           void LCD_Init(void) 
+ 256           {
+ 257   1         LCD_Write_Com(0x38);    /*顯示模式設置*/ 
+ 258   1         DelayMs(5); 
+ 259   1         LCD_Write_Com(0x38); 
+ 260   1         DelayMs(5); 
+ 261   1         LCD_Write_Com(0x38); 
+ 262   1         DelayMs(5); 
+ 263   1         LCD_Write_Com(0x38);  
+ 264   1         LCD_Write_Com(0x08);    /*顯示關閉*/ 
+ 265   1         LCD_Write_Com(0x01);    /*顯示清屏*/ 
+ 266   1         LCD_Write_Com(0x06);    /*顯示光標移動設置*/ 
+ 267   1         DelayMs(5); 
+ 268   1         LCD_Write_Com(0x0C);    /*顯示開及光標設置*/
+ 269   1         }
+ 270             
+ 271             
+ 272          void Song()
+ 273          {
+ 274   1       TH0=Timer0_H;//賦值定時器時間，決定頻率
+ 275   1       TL0=Timer0_L;
+ 276   1       TR0=1;       //打開定時器
+ 277   1       //延時所需要的節拍                      
+ 278   1       }
+ 279          /*------------------------------------------------
+ 280                              主函數
+ 281          ------------------------------------------------*/ 
+ 282          void main(void) 
+ 283          { 
+ 284   1      unsigned char i; 
+ 285   1      TMOD|=0x21; //置定時器0工作方式1
+ 286   1      EA=1;       //打開全局中斷
+ 287   1      ET0=1;      //打開定時0中斷
+ 288   1      SPK=0;
+ 289   1      
+ 290   1      InitUART();
+ 291   1      
+ 292   1      i=0;
+ 293   1              while (1) 
+ 294   1               {  
+ 295   2              
+ 296   2                    if (head == 1)
+ 297   2                    {
+ 298   3                    head = 0;
+ 299   3                    switch(recbuf[0])
+ 300   3                    {
+ 301   4      
+ 302   4                          case 1:     
+ 303   4                                                              TR0=1;
+C51 COMPILER V7.08   TEXT1                                                                 06/13/2019 17:43:46 PAGE 6   
+
+ 304   4                                                              Timer0_H=FREQH[recbuf[0]-1];
+ 305   4                                                              Timer0_L=FREQL[recbuf[0]-1];
+ 306   4                                                              //Song();
+ 307   4                                  break;
+ 308   4                          case 2: 
+ 309   4                                                              TR0=1;
+ 310   4                                                              Timer0_H=FREQH[recbuf[0]-1];
+ 311   4                                                              Timer0_L=FREQL[recbuf[0]-1];
+ 312   4                                                              //Song();
+ 313   4                                  break;
+ 314   4                          case 3:     
+ 315   4                                                              TR0=1;  
+ 316   4                                                              Timer0_H=FREQH[recbuf[0]-1];
+ 317   4                                                              Timer0_L=FREQL[recbuf[0]-1];
+ 318   4                                                              //Song();
+ 319   4                                  break;
+ 320   4                          case 4:
+ 321   4                                                              TR0=1;
+ 322   4                                                              Timer0_H=FREQH[recbuf[0]-1];
+ 323   4                                                              Timer0_L=FREQL[recbuf[0]-1];
+ 324   4                                                              //Song();
+ 325   4                                  break;
+ 326   4                          case 5:
+ 327   4                                                              TR0=1;
+ 328   4                                                              Timer0_H=FREQH[recbuf[0]-1];
+ 329   4                                                              Timer0_L=FREQL[recbuf[0]-1];
+ 330   4                                                              //Song();
+ 331   4                                  break;
+ 332   4                          case 6:
+ 333   4                                                              TR0=1;
+ 334   4                                                              Timer0_H=FREQH[recbuf[0]-1];
+ 335   4                                                              Timer0_L=FREQL[recbuf[0]-1];
+ 336   4                                                              //Song();
+ 337   4                                  break;
+ 338   4                          case 7:
+ 339   4                                                              TR0=1;
+ 340   4                                                              Timer0_H=FREQH[recbuf[0]-1];
+ 341   4                                                              Timer0_L=FREQL[recbuf[0]-1];
+ 342   4                                                              //Song();
+ 343   4                                  break;
+ 344   4                                                              
+ 345   4                                                              
+ 346   4                          case 8:
+ 347   4                                                              TR0=1;
+ 348   4                                                              Timer0_H=FREQH[recbuf[0]-1];
+ 349   4                                                              Timer0_L=FREQL[recbuf[0]-1];
+ 350   4                                                              //Song();
+ 351   4                                  break;
+ 352   4                          case 9:
+ 353   4                                                              TR0=1;
+ 354   4                                                              Timer0_H=FREQH[recbuf[0]-1];
+ 355   4                                                              Timer0_L=FREQL[recbuf[0]-1];
+ 356   4                                                              //Song();
+ 357   4                                  break;
+ 358   4                          case 10:
+ 359   4                                                              TR0=1;
+ 360   4                                                              Timer0_H=FREQH[recbuf[0]-1];
+ 361   4                                                              Timer0_L=FREQL[recbuf[0]-1];
+ 362   4                                                              //Song();
+ 363   4                                  break;
+ 364   4                          case 11:
+ 365   4                                                              TR0=1;
+C51 COMPILER V7.08   TEXT1                                                                 06/13/2019 17:43:46 PAGE 7   
+
+ 366   4                                                              Timer0_H=FREQH[recbuf[0]-1];
+ 367   4                                                              Timer0_L=FREQL[recbuf[0]-1];
+ 368   4                                                              //Song();
+ 369   4                                  break;
+ 370   4                          case 12:
+ 371   4                                                              TR0=1;
+ 372   4                                                              Timer0_H=FREQH[recbuf[0]-1];
+ 373   4                                                              Timer0_L=FREQL[recbuf[0]-1];
+ 374   4                                                              //Song();
+ 375   4                                  break;
+ 376   4                          case 13:
+ 377   4                                                              TR0=1;
+ 378   4                                                              Timer0_H=FREQH[recbuf[0]-1];
+ 379   4                                                              Timer0_L=FREQL[recbuf[0]-1];
+ 380   4                                                              //Song();
+ 381   4                                  break;      
+ 382   4      /*--------------------------------------------------------------------------------------------------------
+             --*/                                               
+ 383   4                          case 14:
+ 384   4                                                              TR0 = 0;
+ 385   4                                                              SPK = 0;
+ 386   4                                  break;
+ 387   4                          case 15:
+ 388   4                                                              TR0 = 0;
+ 389   4                                                              SPK = 0;
+ 390   4                                  break;
+ 391   4                          case 16:
+ 392   4                                                              TR0 = 0;
+ 393   4                                                              SPK = 0;
+ 394   4                                  break;
+ 395   4                          case 17:
+ 396   4                                                              TR0 = 0;
+ 397   4                                                              SPK = 0;
+ 398   4                                  break;
+ 399   4                          case 18:
+ 400   4                                                              TR0 = 0;
+ 401   4                                                              SPK = 0;
+ 402   4                                  break;
+ 403   4                          case 19:
+ 404   4                                                              TR0 = 0;
+ 405   4                                                              SPK = 0;
+ 406   4                                  break;
+ 407   4                          case 20:
+ 408   4                                                              TR0 = 0;
+ 409   4                                                              SPK = 0;
+ 410   4                                  break;
+ 411   4                          case 21:
+ 412   4                                                              TR0 = 0;
+ 413   4                                                              SPK = 0;
+ 414   4                                  break;
+ 415   4                          case 22:
+ 416   4                                                              TR0 = 0;
+ 417   4                                                              SPK = 0;
+ 418   4                                  break;
+ 419   4                          case 23:
+ 420   4                                                              TR0 = 0;
+ 421   4                                                              SPK = 0;
+ 422   4                                  break;
+ 423   4                          case 24:
+ 424   4                                                              TR0 = 0;
+ 425   4                                                              SPK = 0;
+ 426   4                                  break;
+C51 COMPILER V7.08   TEXT1                                                                 06/13/2019 17:43:46 PAGE 8   
+
+ 427   4                          case 25:
+ 428   4                                                              TR0 = 0;
+ 429   4                                                              SPK = 0;
+ 430   4                                  break;
+ 431   4                          case 26:
+ 432   4                                                              TR0 = 0;
+ 433   4                                                              SPK = 0;
+ 434   4                                  break;
+ 435   4                     }
+ 436   3                                 SPK = 0;
+ 437   3      
+ 438   3                   }
+ 439   2              }
+ 440   1      
+ 441   1      }
+ 442          
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =    513    ----
+   CONSTANT SIZE    =     36    ----
+   XDATA SIZE       =   ----    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =     23       1
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)
